@@ -34,7 +34,6 @@ from topics.three_dimensions import *
 # the final frame, and use -n <number> to skip ahead
 # to the n'th animation of a scene.
 
-
 class SquareToCircle(Scene):
     def construct(self):
         circle = Circle()
@@ -55,11 +54,9 @@ class WarpSquare(Scene):
         ))
         self.wait()
 
-
 class WriteStuff(Scene):
     def construct(self):
         self.play(Write(TextMobject("Stuff").scale(3)))
-
 
 class Rotation3d(ThreeDScene):
     def construct(self):
@@ -122,7 +119,6 @@ class Rotation3d(ThreeDScene):
         self.move_camera(phi, theta, distance,
                          run_time = 5)
 
-
 class SpinAroundCube(ThreeDScene):
     # Take a look at ThreeDSCene in three_dimensions.py.
     # This has a few methods on it like set_camera_position
@@ -165,8 +161,6 @@ class SpinAroundCube(ThreeDScene):
         self.begin_ambient_camera_rotation()
         self.wait(4)
         self.play(FadeOut(cube))
-
-
 
         text = TextMobject("Your ad here")
         text.rotate(TAU/4, axis = RIGHT)
