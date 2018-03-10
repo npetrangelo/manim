@@ -360,10 +360,11 @@ def get_null():
     return "/dev/null"
 
 def tex_to_dvi(tex_file):
-    result = tex_file.replace(".tex", ".dvi")
+    result = tex_file.replace(".tex", ".xdv")
     if not os.path.exists(result):
         commands = [
-            "latex",
+            "xelatex",
+            "-no-pdf",
             "-interaction=batchmode",
             "-halt-on-error",
             "-output-directory=" + TEX_DIR,
@@ -390,7 +391,7 @@ def dvi_to_svg(dvi_file, regen_if_exists = False):
     Returns a list of PIL Image objects for these images sorted as they
     where in the dvi
     """
-    result = dvi_file.replace(".dvi", ".svg")
+    result = dvi_file.replace(".xdv", ".svg")
     if not os.path.exists(result):
         commands = [
             "dvisvgm",
