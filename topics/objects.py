@@ -308,6 +308,20 @@ class Headphones(SVGMobject):
             self.move_to(eyes, DOWN)
             self.shift(DOWN*eyes.get_height()/4)
 
+class TankBot(VGroup):
+    CONFIG = {
+        "propagate_style_to_family" : True,
+    }
+    def __init__(self, **kwargs):
+        self.left = Rectangle(self,
+            color = "WHITE",
+            height = 2.0,
+            width = 4.0,
+            **kwargs)
+        
+        VGroup.__init__(self, self.left)
+        
+
 class Clock(VGroup):
     CONFIG = {
         "propagate_style_to_family" : True,
