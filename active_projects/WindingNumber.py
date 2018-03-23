@@ -49,6 +49,9 @@ cw_circle = Circle(color = WHITE).stretch(-1, 0)
 # Used when walker animations are on black backgrounds, in EquationSolver2d and PiWalker
 WALKER_LIGHT_COLOR = DARK_GREY
 
+ODOMETER_RADIUS = 1.5
+ODOMETER_STROKE_WIDTH = 20
+
 # TODO/WARNING: There's a lot of refactoring and cleanup to be done in this code,
 # (and it will be done, but first I'll figure out what I'm doing with all this...)
 # -SR
@@ -115,7 +118,6 @@ positive_color = rev_to_color(0)
 negative_color = rev_to_color(0.5)
 neutral_color = rev_to_color(0.25)
         
-# This, the first animation I made, has the messiest code, full of cruft, but so it goes
 class EquationSolver1d(GraphScene, ZoomedScene):
     CONFIG = {
     "camera_config" : 
@@ -132,7 +134,7 @@ class EquationSolver1d(GraphScene, ZoomedScene):
     "graph_label" : None,
     "show_target_line" : True,
     "base_line_y" : 0, # The y coordinate at which to draw our x guesses
-    "show_y_as_deviation" : False, # Displays y-values as deviations from target
+    "show_y_as_deviation" : False, # Displays y-values as deviations from target,
     }
 
     def drawGraph(self):
@@ -450,82 +452,11 @@ def make_alpha_winder(func, start, end, num_checkpoints):
         return resit_near(func(x), check_points[index])
     return return_func
 
-def split_interval((a, b)):
-    mid = (a + b)/2.0
-    return ((a, mid), (mid, b))
-
-class RectangleData():
-    def __init__(self, x_interval, y_interval):
-        self.rect = (x_interval, y_interval)
-
-    def get_top_left(self):
-        return np.array((self.rect[0][0], self.rect[1][1]))
-
-    def get_top_right(self):
-        return np.array((self.rect[0][1], self.rect[1][1]))
-
-    def get_bottom_right(self):
-        return np.array((self.rect[0][1], self.rect[1][0]))
-
-    def get_bottom_left(self):
-        return np.array((self.rect[0][0], self.rect[1][0]))
-
-    def get_top(self):
-        return (self.get_top_left(), self.get_top_right())
-
-    def get_right(self):
-        return (self.get_top_right(), self.get_bottom_right())
-
-    def get_bottom(self):
-        return (self.get_bottom_right(), self.get_bottom_left())
-
-    def get_left(self):
-        return (self.get_bottom_left(), self.get_top_left())
-
-    def splits_on_dim(self, dim):
-        x_interval = self.rect[0]
-        y_interval = self.rect[1]
-
-        # TODO: Can refactor the following; will do later
-        if dim == 0:
-            return_data = [RectangleData(new_interval, y_interval) for new_interval in split_interval(x_interval)]
-        elif dim == 1:
-            return_data = [RectangleData(x_interval, new_interval) for new_interval in split_interval(y_interval)[::-1]]        
-        else: 
-            print "RectangleData.splits_on_dim passed illegitimate dimension!"
-
-        return tuple(return_data)
-
-    def split_line_on_dim(self, dim):
-        x_interval = self.rect[0]
-        y_interval = self.rect[1]
-
-        if dim == 0:
-            sides = (self.get_top(), self.get_bottom())
-        elif dim == 1:
-            sides = (self.get_left(), self.get_right())
-        else:
-            print "RectangleData.split_line_on_dim passed illegitimate dimension!"
-
-        return tuple([mid(x, y) for (x, y) in sides])
-
 # The various inconsistent choices of what datatype to use where are a bit of a mess,
 # but I'm more keen to rush this video out now than to sort this out.
 
 def complex_to_pair(c):
     return np.array((c.real, c.imag))
-
-# def complex_poly_with_roots(*roots):
-#     def poly(c):
-#         return np.prod([c - z for z in roots])
-#     return poly
-
-# def complex_func_by_critical_points(roots, poles = []):
-#     numerator = complex_poly_with_roots(*map(pair_to_complex, roots))
-#     denominator = complex_poly_with_roots(*map(pair_to_complex, poles))
-#     def rational_func(c):
-#         return numerator(c)/denominator(c)
-#     return rational_func
 
 def plane_func_from_complex_func(f):
     return lambda (x, y) : complex_to_pair(f(complex(x,y)))
@@ -540,11 +471,18 @@ def point3d_func_from_complex_func(f):
     return point3d_func_from_plane_func(plane_func_from_complex_func(f))
 
 def plane_zeta((x, y)):
-    answer = mpmath.zeta(complex(x, y))
     CLAMP_SIZE = 1000
+    z = complex(x, y)
+    try:
+        answer = mpmath.zeta(z)
+    except ValueError:
+        return (CLAMP_SIZE, 0)
     if abs(answer) > CLAMP_SIZE:
         answer = answer/abs(answer) * CLAMP_SIZE
     return (float(answer.real), float(answer.imag))
+
+def rescaled_plane_zeta((x, y)):
+    return plane_zeta((x/SPACE_WIDTH, 8*y))
 
 # Returns a function from 2-ples to 2-ples
 # This function is specified by a list of (x, y, z) tuples, 
@@ -573,6 +511,9 @@ def plane_func_by_wind_spec(*specs):
         return poly(c, pos_specs) * np.conjugate(poly(c, neg_specs_made_pos))
     
     return plane_func_from_complex_func(complex_func)
+
+def scale_func(func, scale_factor):
+    return lambda x : func(x) * scale_factor
 
 # Used in Initial2dFunc scenes, VectorField scene, and ExamplePlaneFunc
 example_plane_func_spec = [(-3, -1.3, 2), (0.1, 0.2, 1), (2.8, -2, -1)]
@@ -644,6 +585,7 @@ def walker_animation_with_display(
     number_update_func = None,
     show_arrows = True,
     scale_arrows = False,
+    num_decimal_points = 1,
     **kwargs
     ):
     
@@ -658,7 +600,7 @@ def walker_animation_with_display(
 
     if number_update_func != None:
         display = DecimalNumber(0, 
-            num_decimal_points = 1, 
+            num_decimal_points = num_decimal_points, 
             fill_color = WHITE,
             include_background_rectangle = True)
         display.background_rectangle.fill_opacity = 0.5
@@ -797,9 +739,15 @@ class PiWalker(ColorMappedByFuncScene):
         "walk_coords" : [],
         "step_run_time" : 1,
         "scale_arrows" : False,
+        "display_wind" : True,
+        "wind_reset_indices" : [],
         "display_size" : False,
         "display_odometer" : False,
         "color_foreground_not_background" : False,
+        "show_num_plane" : False,
+        "draw_lines" : True,
+        "num_checkpoints" : 10,
+        "num_decimal_points" : 1
     }
 
     def construct(self):
@@ -820,8 +768,9 @@ class PiWalker(ColorMappedByFuncScene):
             polygon.color_using_background_image(self.background_image_file)
         total_run_time = len(points) * self.step_run_time
         polygon_anim = ShowCreation(polygon, run_time = total_run_time, rate_func = None)
-        walker_anim = EmptyAnimation
+        walker_anim = empty_animation
 
+        start_wind = 0
         for i in range(len(walk_coords)):
             start_coords = walk_coords[i]
             end_coords = walk_coords[(i + 1) % len(walk_coords)]
@@ -830,7 +779,12 @@ class PiWalker(ColorMappedByFuncScene):
             # so the next iteration changing start_coords, end_coords doesn't change this closure
             val_alpha_func = lambda a, start_coords = start_coords, end_coords = end_coords : self.func(interpolate(start_coords, end_coords, a))
 
-            if self.display_size:
+            if self.display_wind:
+                clockwise_val_func = lambda p : -point_to_rev(self.func(p))
+                alpha_winder = make_alpha_winder(clockwise_val_func, start_coords, end_coords, self.num_checkpoints)
+                number_update_func = lambda alpha, alpha_winder = alpha_winder, start_wind = start_wind: alpha_winder(alpha) - alpha_winder(0) + start_wind
+                start_wind = 0 if i + 1 in self.wind_reset_indices else number_update_func(1)
+            elif self.display_size:
                 # We need to do this roundabout default argument thing to get the closure we want,
                 # so the next iteration changing val_alpha_func doesn't change this closure
                 number_update_func = lambda a, val_alpha_func = val_alpha_func : point_to_rescaled_size(val_alpha_func(a)) # We only use this for diagnostics
@@ -847,7 +801,8 @@ class PiWalker(ColorMappedByFuncScene):
                 scale_arrows = self.scale_arrows,
                 number_update_func = number_update_func,
                 run_time = self.step_run_time,
-                walker_stroke_color = WALKER_LIGHT_COLOR if self.color_foreground_not_background else BLACK
+                walker_stroke_color = WALKER_LIGHT_COLOR if self.color_foreground_not_background else BLACK,
+                num_decimal_points = self.num_decimal_points,
             )
 
             if self.display_odometer:
@@ -870,9 +825,18 @@ class PiWalker(ColorMappedByFuncScene):
         # use point_from_proportion to get points along the way
 
         if self.display_odometer:
+            color_wheel = Circle(radius = ODOMETER_RADIUS)
+            color_wheel.stroke_width = ODOMETER_STROKE_WIDTH
+            color_wheel.color_using_background_image(self.short_path_to_long_path("pure_color_map.png")) # Manually inserted here; this is unclean
+            self.add(color_wheel)
             self.play(walker_anim)
         else:
-            self.play(polygon_anim, walker_anim)
+            if self.draw_lines:
+                self.play(polygon_anim, walker_anim)
+            else:
+                # (Note: Turns out, play is unhappy playing empty_animation, as had been
+                # previous approach to this toggle; should fix that)
+                self.play(walker_anim)
 
         self.wait()
 
@@ -882,7 +846,11 @@ class PiWalkerRect(PiWalker):
         "start_y" : 1,
         "walk_width" : 2,
         "walk_height" : 2,
-        "func" : plane_func_from_complex_func(lambda c: c**2)
+        "func" : plane_func_from_complex_func(lambda c: c**2),
+        "double_up" : False,
+
+        # New default for the scenes using this:
+        "display_wind" : True
     }
 
     def setup(self):
@@ -891,6 +859,8 @@ class PiWalkerRect(PiWalker):
         BR = TR + (0, -self.walk_height)
         BL = BR + (-self.walk_width, 0)
         self.walk_coords = [TL, TR, BR, BL]
+        if self.double_up:
+            self.walk_coords = self.walk_coords + self.walk_coords
         PiWalker.setup(self)
 
 class PiWalkerCircle(PiWalker):
@@ -906,6 +876,114 @@ class PiWalkerCircle(PiWalker):
         self.walk_coords = [r * np.array((np.cos(i * TAU/N), np.sin(i * TAU/N))) for i in range(N)]
         PiWalker.setup(self)
 
+def split_interval((a, b)):
+    mid = (a + b)/2.0
+    return ((a, mid), (mid, b))
+
+# I am surely reinventing some wheel here, but what's done is done...
+class RectangleData():
+    def __init__(self, x_interval, y_interval):
+        self.rect = (x_interval, y_interval)
+
+    def get_top_left(self):
+        return np.array((self.rect[0][0], self.rect[1][1]))
+
+    def get_top_right(self):
+        return np.array((self.rect[0][1], self.rect[1][1]))
+
+    def get_bottom_right(self):
+        return np.array((self.rect[0][1], self.rect[1][0]))
+
+    def get_bottom_left(self):
+        return np.array((self.rect[0][0], self.rect[1][0]))
+
+    def get_top(self):
+        return (self.get_top_left(), self.get_top_right())
+
+    def get_right(self):
+        return (self.get_top_right(), self.get_bottom_right())
+
+    def get_bottom(self):
+        return (self.get_bottom_right(), self.get_bottom_left())
+
+    def get_left(self):
+        return (self.get_bottom_left(), self.get_top_left())
+
+    def get_center(self):
+        return interpolate(self.get_top_left(), self.get_bottom_right(), 0.5)
+
+    def get_width(self):
+        return self.rect[0][1] - self.rect[0][0]
+
+    def get_height(self):
+        return self.rect[1][1] - self.rect[1][0]
+
+    def splits_on_dim(self, dim):
+        x_interval = self.rect[0]
+        y_interval = self.rect[1]
+
+        # TODO: Can refactor the following; will do later
+        if dim == 0:
+            return_data = [RectangleData(new_interval, y_interval) for new_interval in split_interval(x_interval)]
+        elif dim == 1:
+            return_data = [RectangleData(x_interval, new_interval) for new_interval in split_interval(y_interval)[::-1]]        
+        else: 
+            print "RectangleData.splits_on_dim passed illegitimate dimension!"
+
+        return tuple(return_data)
+
+    def split_line_on_dim(self, dim):
+        x_interval = self.rect[0]
+        y_interval = self.rect[1]
+
+        if dim == 0:
+            sides = (self.get_top(), self.get_bottom())
+        elif dim == 1:
+            sides = (self.get_left(), self.get_right())
+        else:
+            print "RectangleData.split_line_on_dim passed illegitimate dimension!"
+
+        return tuple([mid(x, y) for (x, y) in sides])
+
+
+class EquationSolver2dNode(object):
+    def __init__(self, first_anim, children = []):
+        self.first_anim = first_anim
+        self.children = children
+
+    def depth(self):
+        if len(self.children) == 0:
+            return 0
+
+        return 1 + max(map(lambda n : n.depth(), self.children))
+
+    def nodes_at_depth(self, n):
+        if n == 0:
+            return [self]
+
+        # Not the efficient way to flatten lists, because Python + is linear in list size,
+        # but we have at most two children, so no big deal here
+        return sum(map(lambda c : c.nodes_at_depth(n - 1), self.children), [])
+
+    # This is definitely NOT the efficient way to do BFS, but I'm just trying to write something
+    # quick without thinking that gets the job done on small instances for now
+    def hacky_bfs(self):
+        depth = self.depth()
+
+        # Not the efficient way to flatten lists, because Python + is linear in list size,
+        # but this IS hacky_bfs...
+        return sum(map(lambda i : self.nodes_at_depth(i), range(depth + 1)), [])
+
+    def display_in_series(self):
+        return Succession(self.first_anim, *map(lambda n : n.display_in_series(), self.children))
+
+    def display_in_parallel(self):
+        return Succession(self.first_anim, AnimationGroup(*map(lambda n : n.display_in_parallel(), self.children)))
+
+    def display_in_bfs(self):
+        bfs_nodes = self.hacky_bfs()
+        return Succession(*map(lambda n : n.first_anim, bfs_nodes))
+
 class EquationSolver2d(ColorMappedObjectsScene):
     CONFIG = {
         "camera_config" : {"use_z_coordinate_for_display_order": True},
@@ -915,7 +993,11 @@ class EquationSolver2d(ColorMappedObjectsScene):
         "initial_upper_y" : 3,
         "num_iterations" : 1,
         "num_checkpoints" : 10,
+
+        # Should really merge this into one enum-style variable
         "display_in_parallel" : False,
+        "display_in_bfs" : False,
+
         "use_fancy_lines" : True,
         # TODO: Consider adding a "find_all_roots" flag, which could be turned off 
         # to only explore one of the two candidate subrectangles when both are viable
@@ -932,7 +1014,11 @@ class EquationSolver2d(ColorMappedObjectsScene):
         "show_winding_numbers" : True,
 
         # Used for UhOhScene; 
-        "manual_wind_override" : None
+        "manual_wind_override" : None,
+
+        "show_cursor" : False,
+
+        "linger_parameter" : 0.2,
     }
 
     def construct(self):
@@ -953,10 +1039,13 @@ class EquationSolver2d(ColorMappedObjectsScene):
                 obj1.color_using_background_image(bg)
 
         run_time_base = 1
-        run_time_with_lingering = run_time_base + 0.2
+        run_time_with_lingering = run_time_base + self.linger_parameter
         base_rate = lambda t : t
         linger_rate = squish_rate_func(lambda t : t, 0, 
                         fdiv(run_time_base, run_time_with_lingering))
+
+        cursor_base = TextMobject("?")
+        cursor_base.scale(2)
 
         # Helper functions for manual_wind_override
         def head(m):
@@ -975,7 +1064,7 @@ class EquationSolver2d(ColorMappedObjectsScene):
             print "Solver at depth: " + str(cur_depth)
 
             if cur_depth >= self.num_iterations:
-                return empty_animation
+                return EquationSolver2dNode(empty_animation)
 
             def draw_line_return_wind(start, end, start_wind, should_linger = False, draw_line = True):
                 alpha_winder = make_alpha_winder(clockwise_val_func, start, end, self.num_checkpoints)
@@ -1027,6 +1116,24 @@ class EquationSolver2d(ColorMappedObjectsScene):
                     draw_line = i in sides_to_draw)
                 anim = Succession(anim, next_anim)
 
+            if self.show_cursor:
+                cursor = cursor_base.copy()
+                center_x, center_y = rect.get_center()
+                width = rect.get_width()
+                height = rect.get_height()
+                
+                cursor.move_to(num_plane.coords_to_point(center_x, center_y))
+                cursor.scale(min(width, height))
+
+                # Do a quick FadeIn, wait, and quick FadeOut on the cursor, matching rectangle-drawing time
+                cursor_anim = Succession(
+                    FadeIn(cursor, run_time = 0.1),
+                    Animation(cursor, run_time = 3.8), 
+                    FadeOut(cursor, run_time = 0.1)
+                )
+
+                anim = AnimationGroup(anim, cursor_anim)
+
             total_wind = head(manual_wind_override) or round(wind_so_far)
 
             if total_wind == 0:
@@ -1041,14 +1148,14 @@ class EquationSolver2d(ColorMappedObjectsScene):
                 # their "Nothing here" status?
                 # Or draw a large X or something
                 fill_rect = polygonObject = Polygon(*points, fill_opacity = 0.8, color = DARK_GREY)
-                return Succession(anim, FadeIn(fill_rect))
+                return EquationSolver2dNode(Succession(anim, FadeIn(fill_rect)))
             else:
                 (sub_rect1, sub_rect2) = rect.splits_on_dim(dim_to_split)
                 if dim_to_split == 0:
                     sub_rect_and_sides = [(sub_rect1, 1), (sub_rect2, 3)]
                 else:
                     sub_rect_and_sides = [(sub_rect1, 2), (sub_rect2, 0)]
-                sub_anims = [
+                children = [
                     Animate2dSolver(
                         cur_depth = cur_depth + 1,
                         rect = sub_rect,
@@ -1061,14 +1168,8 @@ class EquationSolver2d(ColorMappedObjectsScene):
                 mid_line_coords = rect.split_line_on_dim(dim_to_split)
                 mid_line_points = [num_plane.coords_to_point(x, y)  + 2 * IN for (x, y) in mid_line_coords]
                 mid_line = DashedLine(*mid_line_points)
-                if self.display_in_parallel:
-                    recursive_anim = AnimationGroup(*sub_anims) 
-                else:
-                    recursive_anim = Succession(*sub_anims)
-                return Succession(anim, 
-                    ShowCreation(mid_line),
-                    recursive_anim
-                )
+
+                return EquationSolver2dNode(Succession(anim, ShowCreation(mid_line)), children)
 
         lower_x = self.initial_lower_x
         upper_x = self.initial_upper_x
@@ -1082,7 +1183,7 @@ class EquationSolver2d(ColorMappedObjectsScene):
 
         print "Starting to compute anim"
 
-        anim = Animate2dSolver(
+        node = Animate2dSolver(
             cur_depth = 0, 
             rect = rect,
             dim_to_split = 0,
@@ -1091,6 +1192,13 @@ class EquationSolver2d(ColorMappedObjectsScene):
         )
 
         print "Done computing anim"
+
+        if self.display_in_parallel:
+            anim = node.display_in_parallel()
+        elif self.display_in_bfs:
+            anim = node.display_in_bfs()
+        else:
+            anim = node.display_in_series()
 
         # Keep timing details here in sync with details above
         rect_points = [
@@ -1122,6 +1230,11 @@ class EquationSolver2d(ColorMappedObjectsScene):
         self.play(anim, border_anim)
 
         self.wait()
+
+        # In case we wish to reference these later, as had been done in the 
+        # WindingNumber_G/SearchSpacePerimeterVsArea scene at one point
+        self.node = node
+        self.anim = anim
 
 # TODO: Perhaps have option for bullets (pulses) to fade out and in at ends of line, instead of 
 # jarringly popping out and in?
@@ -1205,19 +1318,26 @@ class TestRotater(Scene):
 class OdometerScene(ColorMappedObjectsScene):
     CONFIG = {
         # "func" : lambda p : 100 * p # Full coloring, essentially
-        "rotate_func" : lambda x : np.sin(x * TAU), # This is given in terms of CW revs
-        "run_time" : 5,
+        "rotate_func" : lambda x : 2 * np.sin(2 * x * TAU), # This is given in terms of CW revs
+        "run_time" : 40,
         "dashed_line_angle" : None,
-        "biased_display_start" : None
+        "biased_display_start" : None,
+        "pure_odometer_background" : False
     }
 
     def construct(self):
         ColorMappedObjectsScene.construct(self)
 
-        radius = 1.3
+        radius = ODOMETER_RADIUS
         circle = Circle(center = ORIGIN, radius = radius)
+        circle.stroke_width = ODOMETER_STROKE_WIDTH
         circle.color_using_background_image(self.background_image_file)
         self.add(circle)
+
+        if self.pure_odometer_background:
+            # Just display this background circle, for compositing in Premiere with PiWalker odometers
+            self.wait()
+            return
 
         if self.dashed_line_angle:
             dashed_line = DashedLine(ORIGIN, radius * RIGHT)
@@ -1348,7 +1468,7 @@ class RewriteEquation(Scene):
 
 class SignsExplanation(Scene):
     def construct(self):
-        num_line = NumberLine(stroke_width = 1)
+        num_line = NumberLine()
         largest_num = 10
         num_line.add_numbers(*range(-largest_num, largest_num + 1))
         self.add(num_line)
@@ -1668,44 +1788,77 @@ class Initial2dFuncSceneMorphing(Initial2dFuncSceneBase):
 
 class DemonstrateColorMapping(ColorMappedObjectsScene):
     CONFIG = {
-        "show_num_plane" : False
+        "show_num_plane" : False,
+        "show_full_color_map" : True
     }
 
     def construct(self):
         ColorMappedObjectsScene.construct(self)
 
+        # Doing this in Premiere now instead
+        # output_plane_label = TextMobject("Output Plane", color = WHITE)
+        # output_plane_label.move_to(3 * UP)
+        # self.add_foreground_mobject(output_plane_label)
+
+        if self.show_full_color_map:
+            bright_background = Rectangle(width = 2 * SPACE_WIDTH + 1, height = 2 * SPACE_HEIGHT + 1, fill_opacity = 1)
+            bright_background.color_using_background_image(self.background_image_file)
+            dim_background = bright_background.copy()
+            dim_background.fill_opacity = 0.3
+            
+            background = bright_background.copy()
+            self.add(background)
+            self.wait()
+            self.play(ReplacementTransform(background, dim_background))
+
+        self.wait()
+
+        ray = Line(ORIGIN, 10 * LEFT)
+
+
         circle = cw_circle.copy()
         circle.color_using_background_image(self.background_image_file)
+
+        self.play(ShowCreation(circle))
+
+        self.wait()
+
+        scale_up_factor = 5
+        scale_down_factor = 20
+        self.play(ApplyMethod(circle.scale, fdiv(1, scale_down_factor)))
+
+        self.play(ApplyMethod(circle.scale, scale_up_factor * scale_down_factor))
+
+        self.play(ApplyMethod(circle.scale, fdiv(1, scale_up_factor)))
+
+        self.wait()
+        self.remove(circle)
 
         ray = Line(ORIGIN, 10 * LEFT)
         ray.color_using_background_image(self.background_image_file)
 
-        self.play(ShowCreation(circle))
-
         self.play(ShowCreation(ray))
 
-        scale_up_factor = 5
-        scale_down_factor = 20
-        self.play(ApplyMethod(circle.scale, scale_up_factor))
+        self.wait()
 
-        self.play(ApplyMethod(circle.scale, fdiv(1, scale_up_factor * scale_down_factor)))
+        self.play(Rotating(ray, about_point = ORIGIN, radians = -TAU/2))
 
-        self.play(ApplyMethod(circle.scale, scale_down_factor))
+        self.wait()
 
-        self.play(Rotating(ray, about_point = ORIGIN, radians = -TAU))
+        self.play(Rotating(ray, about_point = ORIGIN, radians = -TAU/2))
 
-# TODO: Illustrations for introducing domain coloring
+        self.wait()
 
-# TODO: Bunch of Pi walker scenes
+        if self.show_full_color_map:
+            self.play(ReplacementTransform(background, bright_background))
+            self.wait()
 
-# TODO: An odometer scene when introducing winding numbers
-# (Just set up an OdometerScene with function matching the walking of the Pi
-# creature from previous scene, then place it as a simultaneous inset with Premiere)
-
+# Everything in this is manually kept in sync with WindingNumber_G/TransitionFromPathsToBoundaries
 class LoopSplitScene(ColorMappedObjectsScene):
     CONFIG = {
-        # TODO: Change this to something more colorful down the midline
-        "func" : plane_func_by_wind_spec((0.1/2, 1.1/2, 1), (-4.1/2, -1.3/2, 2), (1.8/2, -2.1/2, -1)),
+        "func" : plane_func_by_wind_spec(
+            (-2, 0, 2), (2, 0, 1)
+        ),
         "use_fancy_lines" : True,
     }
 
@@ -1715,7 +1868,7 @@ class LoopSplitScene(ColorMappedObjectsScene):
         num_bullets = 4, 
         pulse_time = 1, 
         **kwargs):
-        line = Line(start, end, **kwargs)
+        line = Line(start, end, color = WHITE, stroke_width = 4, **kwargs)
         if self.use_fancy_lines:
             line.color_using_background_image(self.background_image_file)
         anim = LinePulser(
@@ -1725,7 +1878,7 @@ class LoopSplitScene(ColorMappedObjectsScene):
             pulse_time = pulse_time, 
             output_func = self.func,
             **kwargs)
-        return [VGroup(line, *anim.bullets), anim]
+        return (line, VMobject(*anim.bullets), anim)
 
     def construct(self):
         ColorMappedObjectsScene.construct(self)
@@ -1736,102 +1889,137 @@ class LoopSplitScene(ColorMappedObjectsScene):
         # TODO: Change all this to use a wider than tall loop, made of two squares
 
         # Original loop
-        tl = scale_factor * (UP + LEFT) + shift_term
-        tm = scale_factor * UP + shift_term
-        tr = scale_factor * (UP + RIGHT) + shift_term
-        mr = scale_factor * RIGHT + shift_term
-        br = scale_factor * (DOWN + RIGHT) + shift_term
-        bm = scale_factor * DOWN + shift_term
-        bl = scale_factor * (DOWN + LEFT) + shift_term
-        lm = scale_factor * LEFT + shift_term
+        tl = (UP + 2 * LEFT) * scale_factor
+        tm = UP * scale_factor
+        tr = (UP + 2 * RIGHT) * scale_factor
+        bl = (DOWN + 2 * LEFT) * scale_factor
+        bm = DOWN * scale_factor
+        br = (DOWN + 2 * RIGHT) * scale_factor
 
-        loop_color = WHITE
+        top_line = Line(tl, tr) # Invisible; only used for surrounding circle
+        bottom_line = Line(br, bl) # Invisible; only used for surrounding circle
 
-        default_bullet = PiCreature(color = RED)
+        stroke_width = top_line.stroke_width
+
+        default_bullet = PiCreature()
         default_bullet.scale(0.15)
 
-        modified_bullet = PiCreature(color = PINK)
-        modified_bullet.scale(0.15)
+        def pl(a, b):
+            return self.PulsedLine(a, b, default_bullet)
 
-        def SGroup(*args):
-            return VGroup(*[arg[0] for arg in args])
+        def indicate_circle(x, double_horizontal_stretch = False):
+            circle = Circle(color = WHITE, radius = 2 * np.sqrt(2))
+            circle.move_to(x.get_center())
 
-        top_line = self.PulsedLine(tl, tr, default_bullet, color = loop_color)
-        right_line = self.PulsedLine(tr, br, modified_bullet, color = loop_color)
-        bottom_line = self.PulsedLine(br, bl, default_bullet, color = loop_color)
-        left_line = self.PulsedLine(bl, tl, default_bullet, color = loop_color)
-        line_list = [top_line, right_line, bottom_line, left_line]
-        loop = SGroup(*line_list)
-        for line in line_list:
-            self.add(*line)
+            if x.get_slope() == 0:
+                circle.stretch(0.2, 1)
+                if double_horizontal_stretch:
+                    circle.stretch(2, 0)
+            else:
+                circle.stretch(0.2, 0)
+            return circle
+
+        tl_line_trip = pl(tl, tm)
+        midline_left_trip = pl(tm, bm)
+        bl_line_trip = pl(bm, bl)
+        left_line_trip = pl(bl, tl)
+
+        left_square_trips = [tl_line_trip, midline_left_trip, bl_line_trip, left_line_trip]
+        left_square_lines = [x[0] for x in left_square_trips]
+        left_square_lines_vmobject = VMobject(*left_square_lines)
+        left_square_bullets = [x[1] for x in left_square_trips]
+        left_square_anims = [x[2] for x in left_square_trips]
+
+        tr_line_trip = pl(tm, tr)
+        right_line_trip = pl(tr, br)
+        br_line_trip = pl(br, bm)
+        midline_right_trip = pl(bm, tm)
+
+        right_square_trips = [tr_line_trip, right_line_trip, br_line_trip, midline_right_trip]
+        right_square_lines = [x[0] for x in right_square_trips]
+        right_square_lines_vmobject = VMobject(*right_square_lines)
+        right_square_bullets = [x[1] for x in right_square_trips]
+        right_square_anims = [x[2] for x in right_square_trips]
+
+        midline_trips = [midline_left_trip, midline_right_trip]
+        midline_lines = [x[0] for x in midline_trips]
+        midline_lines_vmobject = VMobject(*midline_lines)
+        midline_bullets = [x[1] for x in midline_trips]
+        midline_anims = [x[1] for x in midline_trips]
+
+        left_line = left_line_trip[0]
+        right_line = right_line_trip[0]
+
+        for b in left_square_bullets + right_square_bullets:
+            b.set_fill(opacity = 0)
+
+        faded = 0.3
+
+        # Workaround for FadeOut/FadeIn not playing well with ContinualAnimations due to 
+        # Transforms making copies no longer identified with the ContinualAnimation's tracked mobject
+        def bullet_fade(start, end, mob):
+            return UpdateFromAlphaFunc(mob, lambda m, a : m.set_fill(opacity = interpolate(start, end, a)))
+
+        def bullet_list_fade(start, end, bullet_list):
+            return map(lambda b : bullet_fade(start, end, b), bullet_list)
+
+        def line_fade(start, end, mob):
+            return UpdateFromAlphaFunc(mob, lambda m, a : m.set_stroke(width = interpolate(start, end, a) * stroke_width))
+
+        def play_combined_fade(start, end, lines_vmobject, bullets):
+            self.play(
+                line_fade(start, end, lines_vmobject), 
+                *bullet_list_fade(start, end, bullets)
+            )
+
+        def play_fade_left(start, end):
+            play_combined_fade(start, end, left_square_lines_vmobject, left_square_bullets)
+
+        def play_fade_right(start, end):
+            play_combined_fade(start, end, right_square_lines_vmobject, right_square_bullets)
+
+        def play_fade_mid(start, end):
+            play_combined_fade(start, end, midline_lines_vmobject, midline_bullets)
+
+        def flash_circles(circles):
+            self.play(LaggedStart(FadeIn, VGroup(circles)))
+            self.play(*map(FadeOut, circles))
+
+        self.add(left_square_lines_vmobject, right_square_lines_vmobject)
+        self.remove(*midline_lines)
+        self.wait()
+        self.play(ShowCreation(midline_lines[0]))
+        self.add(midline_lines_vmobject)
         self.wait()
 
-        # Splits in middle
-        if self.use_fancy_lines:
-            split_line = Line(tm, bm)
-            split_line.color_using_background_image(self.background_image_file)
-        else:
-            split_line = DashedLine(tm, bm)
-        self.play(ShowCreation(split_line))
-
-        self.remove(*split_line)
-        mid_line_left = self.PulsedLine(tm, bm, default_bullet, color = loop_color)
-        mid_line_right = self.PulsedLine(bm, tm, modified_bullet, color = loop_color)
-        self.add(*mid_line_left)
-        self.add(*mid_line_right)
-
-        top_line_left_half = self.PulsedLine(tl, tm, default_bullet, 2, 1, color = loop_color)
-        top_line_right_half = self.PulsedLine(tm, tr, modified_bullet, 2, 1, color = loop_color)
-
-        bottom_line_left_half = self.PulsedLine(bm, bl, default_bullet, 2, 1, color = loop_color)
-        bottom_line_right_half = self.PulsedLine(br, bm, modified_bullet, 2, 1, color = loop_color)
-
-        self.remove(*top_line)
-        self.add(*top_line_left_half)
-        self.add(*top_line_right_half)
-        self.remove(*bottom_line)
-        self.add(*bottom_line_left_half)
-        self.add(*bottom_line_right_half)
-
-        left_open_loop = SGroup(top_line_left_half, left_line, bottom_line_left_half)
-        left_closed_loop = VGroup(left_open_loop, mid_line_left[0])
-        right_open_loop = SGroup(top_line_right_half, right_line, bottom_line_right_half)
-        right_closed_loop = VGroup(right_open_loop, mid_line_right[0])
-
-        # self.play(
-        #     ApplyMethod(left_closed_loop.shift, LEFT), 
-        #     ApplyMethod(right_closed_loop.shift, RIGHT)
-        #     )
-
+        self.add(*left_square_anims)
+        self.play(line_fade(1, faded, right_square_lines_vmobject), *bullet_list_fade(0, 1, left_square_bullets))
         self.wait()
+        flash_circles([indicate_circle(l) for l in left_square_lines])
+        self.play(line_fade(faded, 1, right_square_lines_vmobject), *bullet_list_fade(1, 0, left_square_bullets))
 
-        # self.play(
-        #     ApplyMethod(left_open_loop.shift, LEFT), 
-        #     ApplyMethod(right_open_loop.shift, RIGHT)
-        #     )
-
+        self.add(*right_square_anims)
+        self.play(line_fade(1, faded, left_square_lines_vmobject), *bullet_list_fade(0, 1, right_square_bullets))
         self.wait()
-
-        mid_lines = SGroup(mid_line_left, mid_line_right)
-
-        highlight_circle = Circle(color = WHITE) # Perhaps make this a dashed circle?
-        highlight_circle.surround(mid_lines)
-        highlight_circle.stretch(0.3, 0)
-        self.play(Indicate(mid_lines), ShowCreation(highlight_circle, run_time = 0.5))
+        flash_circles([indicate_circle(l) for l in right_square_lines])
+        self.play(line_fade(faded, 1, left_square_lines_vmobject), *bullet_list_fade(1, 0, right_square_bullets))
         
         self.wait()
+        self.play(*bullet_list_fade(0, 1, left_square_bullets + right_square_bullets))
 
-        self.play(FadeOut(highlight_circle), FadeOut(mid_lines))
-        # Because FadeOut didn't remove the continual pulsers, we remove them manually
-        self.remove(mid_line_left[1], mid_line_right[1])
+        outside_circlers = [
+            indicate_circle(left_line), 
+            indicate_circle(right_line), 
+            indicate_circle(top_line, double_horizontal_stretch = True), 
+            indicate_circle(bottom_line, double_horizontal_stretch = True)
+        ]
+        flash_circles(outside_circlers)
 
-        # Brings loop back together; keep in sync with motions which bring loop apart above
-        # self.play(
-        #     ApplyMethod(left_open_loop.shift, 2 * RIGHT), 
-        #     ApplyMethod(right_open_loop.shift, 2 * LEFT)
-        #     )
+        inner_circle = indicate_circle(midline_lines[0])
+        self.play(FadeIn(inner_circle))
+        self.play(FadeOut(inner_circle), line_fade(1, 0, midline_lines_vmobject), *bullet_list_fade(1, 0, midline_bullets))
 
-        self.wait()
+        self.wait(3)
 
 # Is there a way to abstract this into a general process to derive a new mapped scene from an old scene?
 class LoopSplitSceneMapped(LoopSplitScene):
@@ -1853,12 +2041,46 @@ class FundThmAlg(EquationSolver2d):
         "use_fancy_lines" : True,
     }
 
+class SolveX5MinusXMinus1(EquationSolver2d):
+    CONFIG = {
+        "func" : plane_func_from_complex_func(lambda c : c**5 - c - 1),
+        "num_iterations" : 5,
+        "use_fancy_lines" : True,
+    }
+
+class SolveX5MinusXMinus1Parallel(SolveX5MinusXMinus1):
+    CONFIG = {
+        "display_in_parallel" : True
+    }
+
+class SolveX5MinusXMinus1BFS(SolveX5MinusXMinus1):
+    CONFIG = {
+        "display_in_bfs" : True
+    }
+
 class PreviewClip(EquationSolver2d):
     CONFIG = {
         "func" : example_plane_func,
         "num_iterations" : 5,
         "display_in_parallel" : True,
         "use_fancy_lines" : True,
+    }
+
+class QuickPreview(PreviewClip):
+    CONFIG = {
+        "num_iterations" : 3,
+        "display_in_parallel" : False,
+        "display_in_bfs" : True,
+        "show_cursor" : True
+    }
+
+class LongEquationSolver(EquationSolver2d):
+    CONFIG = {
+        "func" : example_plane_func,
+        "num_iterations" : 10,
+        "display_in_bfs" : True,
+        "linger_parameter" : 0.4,
+        "show_cursor" : True,
     }
 
 # TODO: Borsuk-Ulam visuals
@@ -1978,23 +2200,45 @@ class CombineInterval2(Scene):
 
         self.wait()
 
-tiny_loop_func = plane_func_by_wind_spec((-1, -2), (1, 1), (1, 1))
-class TinyLoopInInputPlane(ColorMappedByFuncScene):
+tiny_loop_func = scale_func(plane_func_by_wind_spec((-1, -2), (1, 1), (1, 1)), 0.3)
+
+class TinyLoopScene(ColorMappedByFuncScene):
     CONFIG = {
         "func" : tiny_loop_func,
         "show_num_plane" : False,
+        "loop_point" : ORIGIN,
+        "circle_scale" : 0.7
     }
 
     def construct(self):
         ColorMappedByFuncScene.construct(self)
-        self.wait()
 
         circle = cw_circle.copy()
-        circle.move_to(UP + RIGHT)
+        circle.scale(self.circle_scale)
+        circle.move_to(self.loop_point)
 
         self.play(ShowCreation(circle))
+        self.wait()
 
-class TinyLoopInOutputPlane(TinyLoopInInputPlane):
+class TinyLoopInInputPlaneAroundNonZero(TinyLoopScene):
+    CONFIG = {
+        "loop_point" : 0.5 * RIGHT
+    }
+
+class TinyLoopInInputPlaneAroundZero(TinyLoopScene):
+    CONFIG = {
+        "loop_point" : UP + RIGHT
+    }
+
+class TinyLoopInOutputPlaneAroundNonZero(TinyLoopInInputPlaneAroundNonZero):
+    CONFIG = {
+        "camera_class" : MappingCamera,
+        "camera_config" : {"mapping_func" : point3d_func_from_plane_func(tiny_loop_func)},
+        "show_output" : True,
+        "show_num_plane" : False,
+    }
+
+class TinyLoopInOutputPlaneAroundZero(TinyLoopInInputPlaneAroundZero):
     CONFIG = {
         "camera_class" : MappingCamera,
         "camera_config" : {"mapping_func" : point3d_func_from_plane_func(tiny_loop_func)},
@@ -2172,6 +2416,17 @@ class UhOhScene(EquationSolver2d):
         "num_iterations" : 5,
     }
 
+class UhOhSceneWithWindingNumbers(UhOhScene):
+    CONFIG = {
+        "show_winding_numbers" : True,
+    }
+
+class UhOhSceneWithWindingNumbersNoOverride(UhOhSceneWithWindingNumbers):
+    CONFIG = {
+        "manual_wind_override" : None,
+        "num_iterations" : 2
+    }
+
 class UhOhSalientStill(ColorMappedObjectsScene):
     CONFIG = {
         "func" : uhOhFunc
@@ -2293,4 +2548,174 @@ class ZetaViz(PureColorMap):
         #"num_plane" : criticalStrip,
         "show_num_plane" : True
     }
+
+class TopLabel(Scene):
+    CONFIG = {
+        "text" : "Text"
+    }
+    def construct(self):
+        label = TextMobject(self.text)
+        label.move_to(3 * UP)
+        self.add(label)
+        self.wait()
+
+# This is a giant hack that doesn't handle rev wrap-around correctly; should use 
+# make_alpha_winder instead
+class SpecifiedWinder(PiWalker):
+    CONFIG = {
+        "start_x" : 0,
+        "start_y" : 0,
+        "x_wind" : 1, # Assumed positive
+        "y_wind" : 1, # Assumed positive
+        "step_size" : 0.1
+    }
+
+    def setup(self):
+        rev_func = lambda p : point_to_rev(self.func(p))
+        start_pos = np.array((self.start_x, self.start_y))
+        cur_pos = start_pos.copy()
+        start_rev = rev_func(start_pos)
+
+        mid_rev = start_rev
+        while (abs(mid_rev - start_rev) < self.x_wind):
+            cur_pos += (self.step_size, 0)
+            mid_rev = rev_func(cur_pos)
+
+        print "Reached ", cur_pos, ", with rev ", mid_rev - start_rev
+        mid_pos = cur_pos.copy()
+
+        end_rev = mid_rev
+        while (abs(end_rev - mid_rev) < self.y_wind):
+            cur_pos -= (0, self.step_size)
+            end_rev = rev_func(cur_pos)
+
+        end_pos = cur_pos.copy()
+
+        print "Reached ", cur_pos, ", with rev ", end_rev - mid_rev
+
+        self.walk_coords = [start_pos, mid_pos, end_pos]
+        print "Walk coords: ", self.walk_coords
+        PiWalker.setup(self)
+
+class OneFifthTwoFifthWinder(SpecifiedWinder):
+    CONFIG = {
+        "func" : example_plane_func,
+        "start_x" : -2.0,
+        "start_y" : 1.0,
+        "x_wind" : 0.2,
+        "y_wind" : 0.2,
+        "step_size" : 0.01,
+        "show_num_plane" : False,
+        "step_run_time" : 6,
+        "num_decimal_points" : 2,
+    }
+
+class OneFifthOneFifthWinderWithReset(OneFifthTwoFifthWinder):
+    CONFIG = {
+        "wind_reset_indices" : [1]
+    }
+
+class OneFifthTwoFifthWinderOdometer(OneFifthTwoFifthWinder):
+    CONFIG = {
+        "display_odometer" : True,
+    }
+
+class ForwardBackWalker(PiWalker):
+    CONFIG = {
+        "func" : example_plane_func,
+        "walk_coords" : [np.array((-2, 1)), np.array((1, 1))],
+        "step_run_time" : 3,
+    }
+
+class ForwardBackWalkerOdometer(ForwardBackWalker):
+    CONFIG = {
+        "display_odometer" : True,
+    }
+
+class PureOdometerBackground(OdometerScene):
+    CONFIG = {
+        "pure_odometer_background" : True
+    }
+
+class CWColorWalk(PiWalkerRect):
+    CONFIG = {
+        "func" : example_plane_func,
+        "start_x" : example_plane_func_spec[0][0] - 1,
+        "start_y" : example_plane_func_spec[0][1] + 1,
+        "walk_width" : 2,
+        "walk_height" : 2,
+        "draw_lines" : False,
+        "display_wind" : False,
+        "step_run_time" : 2
+    }
+
+class CWColorWalkOdometer(CWColorWalk):
+    CONFIG = {
+        "display_odometer" : True,
+    }
+
+class CCWColorWalk(CWColorWalk):
+    CONFIG = {
+        "start_x" : example_plane_func_spec[2][0] - 1,
+        "start_y" : example_plane_func_spec[2][1] + 1,
+    }
+
+class CCWColorWalkOdometer(CCWColorWalk):
+    CONFIG = {
+        "display_odometer" : True,
+    }
+
+class ThreeTurnWalker(PiWalkerRect):
+    CONFIG = {
+        "func" : plane_func_from_complex_func(lambda c: c**3 * complex(1, 1)**3),
+        "double_up" : True,
+        "wind_reset_indices" : [4]
+    }
+
+class ThreeTurnWalkerOdometer(ThreeTurnWalker):
+    CONFIG = {
+        "display_odometer" : True,
+    }
+
+class FourTurnWalker(PiWalkerRect):
+    CONFIG = {
+        "func" : plane_func_by_wind_spec((0, 0, 4))
+    }
+
+class FourTurnWalkerOdometer(FourTurnWalker):
+    CONFIG = {
+        "display_odometer" : True,
+    }
+
+class OneTurnWalker(PiWalkerRect):
+    CONFIG = {
+        "func" : plane_func_from_complex_func(lambda c : np.exp(c) + c)
+    }
+
+class OneTurnWalkerOdometer(OneTurnWalker):
+    CONFIG = {
+        "display_odometer" : True,
+    }
+
+class ZeroTurnWalker(PiWalkerRect):
+    CONFIG = {
+        "func" : plane_func_by_wind_spec((2, 2, 1), (-1, 2, -1))
+    }
+
+class ZeroTurnWalkerOdometer(ZeroTurnWalker):
+    CONFIG = {
+        "display_odometer" : True,
+    }
+
+class NegOneTurnWalker(PiWalkerRect):
+    CONFIG = {
+        "step_run_time" : 2,
+        "func" : plane_func_by_wind_spec((0, 0, -1))
+    }
+
+class NegOneTurnWalkerOdometer(NegOneTurnWalker):
+    CONFIG = {
+        "display_odometer" : True,
+    }
+
 # FIN
