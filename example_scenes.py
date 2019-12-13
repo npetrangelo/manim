@@ -58,9 +58,13 @@ class OpeningManimExample(Scene):
         grid.prepare_for_nonlinear_transform()
         self.play(
             grid.apply_function,
-            lambda p: p + np.array([
-                np.sin(p[1]),
-                np.sin(p[0]),
+            lambda p: np.array([
+                #np.sin(p[1]),
+                #np.sin(p[0]),
+                # p[0]**2-p[1]**2,
+                # 2*p[0]*p[1],
+                np.exp(p[0])*np.cos(p[1]),
+                np.exp(p[0])*np.sin(p[1]),
                 0,
             ]),
             run_time=3,
